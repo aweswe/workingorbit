@@ -9,14 +9,27 @@ const corsHeaders = {
 const SYSTEM_PROMPT = `You are an expert React/TypeScript code generator. You create beautiful, functional UI components using React and Tailwind CSS.
 
 CRITICAL RULES:
-1. Always output a single, complete, working React component
-2. The component MUST be the default export
+1. Output EXACTLY ONE component with EXACTLY ONE "export default" statement
+2. The component MUST be a valid React functional component
 3. Use ONLY inline Tailwind CSS classes for styling
 4. Do NOT use any external imports except React hooks (useState, useEffect, etc.)
 5. The component should be self-contained and runnable in a Sandpack environment
 6. Use modern, beautiful UI patterns with gradients, shadows, hover effects
 7. Make the UI responsive and visually appealing
 8. Include realistic placeholder content/data
+
+FORBIDDEN PATTERNS (NEVER USE THESE):
+- NEVER use <details> or <summary> tags
+- NEVER duplicate the component definition
+- NEVER include multiple "export default" statements
+- NEVER use malformed JSX or unclosed tags
+- NEVER use external dependencies like lucide-react, @radix-ui
+
+SVG ICONS:
+When you need icons, use simple, valid inline SVGs like:
+<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+</svg>
 
 OUTPUT FORMAT:
 Your response MUST follow this exact format:
@@ -25,7 +38,7 @@ EXPLANATION:
 [Brief 1-2 sentence description of what you built]
 
 \`\`\`tsx
-[Your complete React component code here]
+[Your complete React component code here - ONLY ONE COMPONENT WITH ONE export default]
 \`\`\`
 
 FEATURES:
@@ -33,9 +46,12 @@ FEATURES:
 - [Feature 2]
 - [Feature 3]
 
-NEVER include multiple code blocks. Only ONE code block with the complete component.
-NEVER use external dependencies like lucide-react, @radix-ui, etc. Use inline SVGs for icons.
-NEVER use import statements except for React.`;
+VALIDATION CHECKLIST (verify before responding):
+✓ Only ONE component definition
+✓ Only ONE "export default" at the END
+✓ All JSX tags properly closed
+✓ No <details> or <summary> tags
+✓ Valid TypeScript/React syntax`;
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -50,7 +66,6 @@ interface RequestBody {
 }
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -63,17 +78,14 @@ serve(async (req) => {
       throw new Error('GROQ_API_KEY not configured');
     }
 
-    // Build messages array
     const messages: Message[] = [
       { role: 'system', content: SYSTEM_PROMPT },
     ];
 
-    // Add conversation history for context
     if (conversationHistory.length > 0) {
-      messages.push(...conversationHistory.slice(-10)); // Last 10 messages for context
+      messages.push(...conversationHistory.slice(-10));
     }
 
-    // If this is an error retry, add error context
     if (errorContext && retryCount > 0) {
       messages.push({
         role: 'user',
@@ -84,14 +96,13 @@ ${errorContext}
 
 Original request: ${prompt}
 
-Please provide a corrected version that fixes this error. Remember to output ONLY one complete, working component.`
+Please provide a corrected version. Remember: ONLY ONE component, ONLY ONE export default.`
       });
     } else {
       messages.push({ role: 'user', content: prompt });
     }
 
     console.log(`Generating code for prompt: ${prompt.substring(0, 100)}...`);
-    console.log(`Retry count: ${retryCount}`);
 
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -114,7 +125,7 @@ Please provide a corrected version that fixes this error. Remember to output ONL
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
+    let content = data.choices?.[0]?.message?.content;
 
     if (!content) {
       throw new Error('No content in AI response');
@@ -122,7 +133,26 @@ Please provide a corrected version that fixes this error. Remember to output ONL
 
     // Extract code from the response
     const codeMatch = content.match(/```(?:tsx?|jsx?|javascript|typescript)?\n([\s\S]*?)```/);
-    const code = codeMatch ? codeMatch[1].trim() : null;
+    let code = codeMatch ? codeMatch[1].trim() : null;
+
+    // Post-processing: Fix common issues
+    if (code) {
+      // Remove duplicate component definitions
+      const exportDefaultCount = (code.match(/export default/g) || []).length;
+      if (exportDefaultCount > 1) {
+        // Keep only the first component definition
+        const firstExportIndex = code.indexOf('export default');
+        const secondExportIndex = code.indexOf('export default', firstExportIndex + 1);
+        if (secondExportIndex > -1) {
+          code = code.substring(0, secondExportIndex).trim();
+        }
+      }
+
+      // Remove malformed tags
+      code = code.replace(/<\/details>/g, '');
+      code = code.replace(/<details>/g, '');
+      code = code.replace(/<summary[^>]*>.*?<\/summary>/g, '');
+    }
 
     // Extract explanation
     const explanationMatch = content.match(/EXPLANATION:\s*([\s\S]*?)(?=```|FEATURES:|$)/i);
@@ -137,7 +167,6 @@ Please provide a corrected version that fixes this error. Remember to output ONL
       .map((line: string) => line.replace(/^-\s*/, '').trim());
 
     console.log('Code extracted:', code ? 'Yes' : 'No');
-    console.log('Explanation:', explanation.substring(0, 100));
 
     return new Response(
       JSON.stringify({

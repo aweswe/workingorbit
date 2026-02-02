@@ -6,33 +6,50 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const EDITOR_SYSTEM_PROMPT = `You are a surgical code editor. You NEVER rewrite entire files.
-You ONLY output valid JSON with patches.
+const EDITOR_SYSTEM_PROMPT = `You are a surgical code editor. You make precise, minimal changes to existing code.
 
 CRITICAL RULES:
-1. Each patch targets ONE specific change
-2. Use EXACT search strings (copy from existing code character-by-character)
-3. Preserve all formatting, whitespace, and indentation
-4. Never touch unrelated code
-5. If changing a className, include the full className attribute
-6. Output ONLY valid JSON, no markdown or explanation outside JSON
+1. Output ONLY valid JSON with patches
+2. Use EXACT search strings - copy character-by-character from the existing code
+3. Keep patches SMALL and FOCUSED - change only what's needed
+4. Include enough context in search strings to be unique (at least one full line)
+5. NEVER output code blocks, only JSON
 
-OUTPUT FORMAT (pure JSON, no code fences):
+OUTPUT FORMAT (pure JSON, no markdown):
 {
   "explanation": "Brief description of what was changed",
   "patches": [
     {
       "file": "App.tsx",
       "operation": "replace",
-      "search": "exact string to find",
+      "search": "exact multi-line string to find",
       "replace": "replacement string"
     }
   ]
 }
 
+SEARCH STRING RULES:
+- Must be EXACTLY as it appears in the code (including whitespace)
+- Include enough context to be unique
+- For className changes, include the full element opening tag
+- For text changes, include surrounding JSX
+
+EXAMPLE for changing button color from blue to black:
+{
+  "explanation": "Changed button color from blue to black",
+  "patches": [
+    {
+      "file": "App.tsx",
+      "operation": "replace",
+      "search": "className=\"bg-blue-500 text-white",
+      "replace": "className=\"bg-black text-white"
+    }
+  ]
+}
+
 OPERATIONS:
-- "replace": Find search string and replace with replace string
-- "insert": Insert replace string after search string
+- "replace": Find search and replace with replace value
+- "insert": Insert replace value after search string
 - "delete": Remove the search string entirely`;
 
 interface CodePatch {
@@ -66,14 +83,20 @@ serve(async (req) => {
             throw new Error('GROQ_API_KEY not configured');
         }
 
-        const userMessage = `CURRENT CODE in ${filename}:
+        // Truncate code if too long to fit in context
+        const maxCodeLength = 8000;
+        const truncatedCode = currentCode.length > maxCodeLength
+            ? currentCode.substring(0, maxCodeLength) + '\n// ... (truncated)'
+            : currentCode;
+
+        const userMessage = `Current code in ${filename}:
 \`\`\`tsx
-${currentCode}
+${truncatedCode}
 \`\`\`
 
 USER REQUEST: ${prompt}
 
-Output ONLY the JSON patch object. No markdown, no code fences, just pure JSON.`;
+Remember: Output ONLY valid JSON. Use EXACT search strings from the code above.`;
 
         console.log(`Edit request: ${prompt.substring(0, 100)}...`);
 
@@ -90,7 +113,7 @@ Output ONLY the JSON patch object. No markdown, no code fences, just pure JSON.`
                     { role: 'user', content: userMessage },
                 ],
                 max_tokens: 2048,
-                temperature: 0.3, // Lower temperature for more precise edits
+                temperature: 0.2,
             }),
         });
 
@@ -107,7 +130,7 @@ Output ONLY the JSON patch object. No markdown, no code fences, just pure JSON.`
             throw new Error('No content in AI response');
         }
 
-        // Clean up response - remove markdown code fences if present
+        // Clean up response
         content = content.trim();
         if (content.startsWith('```')) {
             content = content.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
@@ -122,12 +145,11 @@ Output ONLY the JSON patch object. No markdown, no code fences, just pure JSON.`
             throw new Error('Failed to parse editor response as JSON');
         }
 
-        // Validate patches
         if (!editorResponse.patches || !Array.isArray(editorResponse.patches)) {
             throw new Error('Invalid response: missing patches array');
         }
 
-        // Apply patches to the code
+        // Apply patches
         let updatedCode = currentCode;
         const appliedPatches: string[] = [];
         const errors: string[] = [];
@@ -138,34 +160,50 @@ Output ONLY the JSON patch object. No markdown, no code fences, just pure JSON.`
                 continue;
             }
 
-            const occurrences = (updatedCode.match(new RegExp(escapeRegExp(patch.search), 'g')) || []).length;
+            // Normalize whitespace for matching
+            const normalizedSearch = patch.search.replace(/\r\n/g, '\n');
+            const normalizedCode = updatedCode.replace(/\r\n/g, '\n');
 
-            if (occurrences === 0) {
-                errors.push(`Search string not found: "${patch.search.substring(0, 50)}..."`);
+            if (!normalizedCode.includes(normalizedSearch)) {
+                // Try fuzzy matching - look for similar strings
+                const searchLines = normalizedSearch.split('\n');
+                const firstLine = searchLines[0].trim();
+
+                if (firstLine && normalizedCode.includes(firstLine)) {
+                    errors.push(`Partial match found for: "${firstLine.substring(0, 40)}..." - try using exact string`);
+                } else {
+                    errors.push(`Search string not found: "${patch.search.substring(0, 50)}..."`);
+                }
                 continue;
             }
 
+            const occurrences = normalizedCode.split(normalizedSearch).length - 1;
             if (occurrences > 1) {
-                errors.push(`Multiple matches found for: "${patch.search.substring(0, 50)}..." - applying first only`);
+                errors.push(`Multiple matches (${occurrences}) for: "${patch.search.substring(0, 40)}..." - applying first`);
             }
 
             switch (patch.operation) {
                 case 'replace':
                     updatedCode = updatedCode.replace(patch.search, patch.replace || '');
-                    appliedPatches.push(`Replaced: ${patch.search.substring(0, 30)}...`);
+                    appliedPatches.push(`Replaced: "${patch.search.substring(0, 30)}..."`);
                     break;
                 case 'insert':
                     updatedCode = updatedCode.replace(patch.search, patch.search + (patch.replace || ''));
-                    appliedPatches.push(`Inserted after: ${patch.search.substring(0, 30)}...`);
+                    appliedPatches.push(`Inserted after: "${patch.search.substring(0, 30)}..."`);
                     break;
                 case 'delete':
                     updatedCode = updatedCode.replace(patch.search, '');
-                    appliedPatches.push(`Deleted: ${patch.search.substring(0, 30)}...`);
+                    appliedPatches.push(`Deleted: "${patch.search.substring(0, 30)}..."`);
                     break;
             }
         }
 
         console.log(`Applied ${appliedPatches.length} patches, ${errors.length} errors`);
+
+        // If no patches were applied, throw error to fallback to regeneration
+        if (appliedPatches.length === 0 && errors.length > 0) {
+            throw new Error(`Patch failed: ${errors.join('; ')}`);
+        }
 
         return new Response(
             JSON.stringify({
@@ -195,7 +233,3 @@ Output ONLY the JSON patch object. No markdown, no code fences, just pure JSON.`
         );
     }
 });
-
-function escapeRegExp(string: string): string {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}

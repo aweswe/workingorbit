@@ -3,18 +3,22 @@ import {
   SandpackProvider,
   SandpackPreview,
   SandpackConsole,
+  SandpackCodeEditor,
   useSandpack,
 } from '@codesandbox/sandpack-react';
 import { GenerationState, ProjectFile } from '@/types/chat';
 import {
   Monitor,
+  Code2,
   Terminal,
   Loader2,
   AlertCircle,
   CheckCircle2,
   RefreshCw,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Eye,
+  FileCode
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -45,6 +49,8 @@ html, body, #root {
   height: 100%;
 }`;
 
+type ViewMode = 'preview' | 'code';
+
 interface PreviewPanelProps {
   files: ProjectFile[];
   generationState: GenerationState;
@@ -58,6 +64,7 @@ export function PreviewPanel({
   onRetry,
   onError
 }: PreviewPanelProps) {
+  const [viewMode, setViewMode] = useState<ViewMode>('preview');
   const [showConsole, setShowConsole] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -75,7 +82,6 @@ export function PreviewPanel({
     externalResources: [
       'https://cdn.tailwindcss.com',
     ],
-    // Ensure we don't show the internal navigator
     showNavigator: false,
     showTabs: false,
   };
@@ -96,8 +102,10 @@ export function PreviewPanel({
         isFullscreen && "fixed inset-0 z-50 border-0"
       )}
     >
-      {/* Header Toolbar */}
+      {/* Header Toolbar with Toggle */}
       <PreviewHeader
+        viewMode={viewMode}
+        setViewMode={setViewMode}
         generationState={generationState}
         showConsole={showConsole}
         setShowConsole={setShowConsole}
@@ -109,26 +117,32 @@ export function PreviewPanel({
       {/* Main Content Area */}
       <div className="flex-1 min-h-0 w-full relative group">
         <SandpackProvider
-          key={appCode} // Force a clean remount on code updates
+          key={appCode}
           template="react-ts"
           theme="dark"
           files={sandpackFiles}
           options={sandpackOptions}
           customSetup={customSetup}
         >
-          <SandpackPreviewContent
-            showConsole={showConsole}
-            onError={onError}
-          />
+          {viewMode === 'preview' ? (
+            <SandpackPreviewContent
+              showConsole={showConsole}
+              onError={onError}
+            />
+          ) : (
+            <SandpackCodeContent />
+          )}
         </SandpackProvider>
       </div>
     </div>
   );
 }
 
-// Sub-components for cleaner structure
+// Sub-components
 
 function PreviewHeader({
+  viewMode,
+  setViewMode,
   generationState,
   showConsole,
   setShowConsole,
@@ -136,6 +150,8 @@ function PreviewHeader({
   setIsFullscreen,
   onRetry
 }: {
+  viewMode: ViewMode;
+  setViewMode: (v: ViewMode) => void;
   generationState: GenerationState;
   showConsole: boolean;
   setShowConsole: (v: boolean) => void;
@@ -146,26 +162,52 @@ function PreviewHeader({
   return (
     <div className="flex-shrink-0 px-4 py-3 border-b border-border flex items-center justify-between bg-surface-elevated/95 backdrop-blur supports-[backdrop-filter]:bg-surface-elevated/60">
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-accent/50 text-accent-foreground">
-          <Monitor className="w-4 h-4" />
-          <span className="text-sm font-medium">Preview</span>
+        {/* View Mode Toggle */}
+        <div className="flex items-center bg-accent/30 rounded-lg p-0.5">
+          <button
+            onClick={() => setViewMode('preview')}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200',
+              viewMode === 'preview'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <Eye className="w-4 h-4" />
+            <span>Preview</span>
+          </button>
+          <button
+            onClick={() => setViewMode('code')}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200',
+              viewMode === 'code'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <Code2 className="w-4 h-4" />
+            <span>Code</span>
+          </button>
         </div>
+
         <StatusBadge state={generationState} />
       </div>
 
       <div className="flex items-center gap-1">
-        <button
-          onClick={() => setShowConsole(!showConsole)}
-          className={cn(
-            'p-2 rounded-md transition-all duration-200',
-            showConsole
-              ? 'bg-primary/15 text-primary shadow-sm'
-              : 'hover:bg-accent text-muted-foreground hover:text-foreground'
-          )}
-          title={showConsole ? "Hide Console" : "Show Console"}
-        >
-          <Terminal className="w-4 h-4" />
-        </button>
+        {viewMode === 'preview' && (
+          <button
+            onClick={() => setShowConsole(!showConsole)}
+            className={cn(
+              'p-2 rounded-md transition-all duration-200',
+              showConsole
+                ? 'bg-primary/15 text-primary shadow-sm'
+                : 'hover:bg-accent text-muted-foreground hover:text-foreground'
+            )}
+            title={showConsole ? "Hide Console" : "Show Console"}
+          >
+            <Terminal className="w-4 h-4" />
+          </button>
+        )}
 
         <div className="w-px h-4 bg-border mx-1" />
 
@@ -235,9 +277,7 @@ function SandpackPreviewContent({
 }) {
   const { sandpack } = useSandpack();
 
-  // Monitor for internal Sandpack errors
   useEffect(() => {
-    // Only report fatal errors
     if (sandpack.status === 'idle' && sandpack.error && onError) {
       onError(sandpack.error.message || "An unknown error occurred in the preview");
     }
@@ -268,6 +308,33 @@ function SandpackPreviewContent({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function SandpackCodeContent() {
+  return (
+    <div className="h-full w-full flex flex-col bg-slate-950">
+      {/* File tabs */}
+      <div className="flex items-center gap-1 px-2 py-1 bg-slate-900 border-b border-slate-800">
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 rounded-t text-sm text-slate-300">
+          <FileCode className="w-4 h-4 text-blue-400" />
+          <span>App.tsx</span>
+        </div>
+      </div>
+
+      {/* Code Editor */}
+      <div className="flex-1 overflow-hidden">
+        <SandpackCodeEditor
+          showTabs={false}
+          showLineNumbers={true}
+          showInlineErrors={true}
+          wrapContent={false}
+          closableTabs={false}
+          readOnly={false}
+          style={{ height: '100%', width: '100%' }}
+        />
+      </div>
     </div>
   );
 }

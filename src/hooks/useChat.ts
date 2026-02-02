@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import { Message, GenerationState, ProjectFile, CodeBlock, RequestIntent } from '@/types/chat';
+import { ProjectPlan } from '@/types/pipeline';
 import { supabase } from '@/integrations/supabase/client';
+import { canonicalizeImports } from '@/lib/importCanonicalizer';
 
 const MAX_RETRIES = 3;
 
@@ -17,21 +19,12 @@ function classifyIntent(prompt: string, hasExistingCode: boolean): RequestIntent
   ];
 
   const promptLower = prompt.toLowerCase();
-
-  // Check for explicit edit patterns
   const isEditIntent = editKeywords.some(k => promptLower.includes(k));
   const isGenerateIntent = generateKeywords.some(k => promptLower.includes(k));
 
-  // No existing code = must generate
   if (!hasExistingCode) return 'generate';
-
-  // Clear edit intent
   if (isEditIntent && !isGenerateIntent) return 'edit';
-
-  // Clear generate intent
   if (isGenerateIntent && !isEditIntent) return 'generate';
-
-  // Both or neither - if code exists, prefer edit for shorter prompts
   if (hasExistingCode && prompt.length < 100) return 'edit';
 
   return 'generate';
@@ -41,12 +34,8 @@ export function useChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [generationState, setGenerationState] = useState<GenerationState>({ status: 'idle' });
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
+  const [currentPlan, setCurrentPlan] = useState<ProjectPlan | null>(null);
   const conversationHistoryRef = useRef<{ role: 'user' | 'assistant'; content: string }[]>([]);
-
-  const extractCodeFromResponse = (content: string): string | null => {
-    const codeMatch = content.match(/```(?:tsx?|jsx?|javascript|typescript)?\n([\s\S]*?)```/);
-    return codeMatch ? codeMatch[1].trim() : null;
-  };
 
   // Get current code from project files
   const getCurrentCode = (): string | null => {
@@ -54,27 +43,51 @@ export function useChat() {
     return appFile?.content || null;
   };
 
-  // Generate code (full file replacement)
+  // Step 1: Plan the project
+  const planProject = async (prompt: string): Promise<ProjectPlan> => {
+    const { data, error } = await supabase.functions.invoke('plan-project', {
+      body: { prompt },
+    });
+
+    if (error || !data.success) {
+      throw new Error(data?.error || error?.message || 'Planning failed');
+    }
+
+    return data.plan;
+  };
+
+  // Step 2: Generate types from plan
+  const generateTypes = async (plan: ProjectPlan): Promise<string> => {
+    const { data, error } = await supabase.functions.invoke('generate-types', {
+      body: { plan },
+    });
+
+    if (error || !data.success) {
+      throw new Error(data?.error || error?.message || 'Type generation failed');
+    }
+
+    return data.types;
+  };
+
+  // Step 3: Generate code
   const generateCode = async (
     prompt: string,
+    plan?: ProjectPlan,
     errorContext?: string,
     retryCount: number = 0
   ): Promise<{ content: string; code: string | null; explanation: string; features: string[] }> => {
     const { data, error } = await supabase.functions.invoke('generate-code', {
       body: {
         prompt,
+        plan,
         conversationHistory: conversationHistoryRef.current,
         errorContext,
         retryCount,
       },
     });
 
-    if (error) {
-      throw new Error(error.message || 'Failed to generate code');
-    }
-
-    if (!data.success) {
-      throw new Error(data.error || 'Code generation failed');
+    if (error || !data.success) {
+      throw new Error(data?.error || error?.message || 'Code generation failed');
     }
 
     return {
@@ -85,25 +98,35 @@ export function useChat() {
     };
   };
 
+  // Step 4: Validate code
+  const validateCode = async (code: string, filename: string): Promise<{ valid: boolean; errors: string[]; warnings: string[] }> => {
+    const { data, error } = await supabase.functions.invoke('validate-code', {
+      body: { code, filename },
+    });
+
+    if (error) {
+      console.warn('Validation error:', error);
+      return { valid: true, errors: [], warnings: [] };
+    }
+
+    return {
+      valid: data.valid ?? true,
+      errors: data.errors || [],
+      warnings: data.warnings || [],
+    };
+  };
+
   // Edit code (patch-based)
   const editCode = async (
     prompt: string,
     currentCode: string
   ): Promise<{ code: string; explanation: string; appliedPatches: string[] }> => {
     const { data, error } = await supabase.functions.invoke('edit-code', {
-      body: {
-        prompt,
-        currentCode,
-        filename: 'App.tsx',
-      },
+      body: { prompt, currentCode, filename: 'App.tsx' },
     });
 
-    if (error) {
-      throw new Error(error.message || 'Failed to edit code');
-    }
-
-    if (!data.success) {
-      throw new Error(data.error || 'Code editing failed');
+    if (error || !data.success) {
+      throw new Error(data?.error || error?.message || 'Code editing failed');
     }
 
     return {
@@ -113,8 +136,12 @@ export function useChat() {
     };
   };
 
+  // Update message helper
+  const updateMessage = (id: string, updates: Partial<Message>) => {
+    setMessages((prev) => prev.map((msg) => msg.id === id ? { ...msg, ...updates } : msg));
+  };
+
   const sendMessage = useCallback(async (content: string) => {
-    // Add user message
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -123,7 +150,6 @@ export function useChat() {
       timestamp: new Date(),
     };
 
-    // Add placeholder AI message
     const aiMessageId = (Date.now() + 1).toString();
     const aiMessage: Message = {
       id: aiMessageId,
@@ -135,159 +161,162 @@ export function useChat() {
 
     setMessages((prev) => [...prev, userMessage, aiMessage]);
     setGenerationState({ status: 'generating' });
-
-    // Add to conversation history
     conversationHistoryRef.current.push({ role: 'user', content });
 
-    // Classify intent
     const currentCode = getCurrentCode();
     const intent = classifyIntent(content, !!currentCode);
 
-    console.log(`Intent classified as: ${intent} (hasCode: ${!!currentCode})`);
+    console.log(`🎯 Intent: ${intent} (hasCode: ${!!currentCode})`);
 
-    if (intent === 'edit' && currentCode) {
-      // Use patch-based editing
-      try {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === aiMessageId
-              ? { ...msg, content: '🔧 Applying surgical edit...' }
-              : msg
-          )
-        );
+    try {
+      // EDIT FLOW
+      if (intent === 'edit' && currentCode) {
+        updateMessage(aiMessageId, { content: '🔧 Applying surgical edit...' });
 
         const result = await editCode(content, currentCode);
+        if (!result.code) throw new Error('No code returned from edit');
 
-        if (!result.code) {
-          throw new Error('No code returned from edit');
-        }
+        // Canonicalize imports
+        const canonicalizedCode = canonicalizeImports(result.code);
 
-        const codeBlocks: CodeBlock[] = [
-          { language: 'tsx', code: result.code, filename: 'App.tsx' }
-        ];
+        // Validate
+        const validation = await validateCode(canonicalizedCode, 'App.tsx');
+        const validationNote = validation.warnings.length > 0
+          ? `\n\n⚠️ Warnings:\n${validation.warnings.map(w => `- ${w}`).join('\n')}`
+          : '';
 
         const patchesList = result.appliedPatches.length > 0
           ? '\n\n**Changes applied:**\n' + result.appliedPatches.map(p => `- ${p}`).join('\n')
           : '';
 
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === aiMessageId
-              ? {
-                ...msg,
-                content: result.explanation + patchesList,
-                codeBlocks,
-                status: 'complete',
-              }
-              : msg
-          )
-        );
+        updateMessage(aiMessageId, {
+          content: result.explanation + patchesList + validationNote,
+          codeBlocks: [{ language: 'tsx', code: canonicalizedCode, filename: 'App.tsx' }],
+          status: 'complete',
+        });
 
-        setProjectFiles([
-          { path: 'App.tsx', content: result.code, language: 'tsx' }
-        ]);
-
+        setProjectFiles([{ path: 'App.tsx', content: canonicalizedCode, language: 'tsx' }]);
         conversationHistoryRef.current.push({ role: 'assistant', content: result.explanation });
 
         setGenerationState({ status: 'building' });
         await new Promise((r) => setTimeout(r, 500));
         setGenerationState({ status: 'ready' });
-
         return;
-      } catch (error: any) {
-        console.error('Edit failed, falling back to generate:', error);
-        // Fall through to generate
       }
-    }
 
-    // Use full generation (original logic)
-    let retryCount = 0;
-    let lastError: string | null = null;
-    let finalCode: string | null = null;
-    let finalContent = '';
-
-    while (retryCount <= MAX_RETRIES) {
+      // GENERATE FLOW (Full Pipeline)
+      // Step 1: Planning
+      updateMessage(aiMessageId, { content: '📋 Planning project structure...' });
+      let plan: ProjectPlan | null = null;
       try {
-        if (retryCount > 0) {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === aiMessageId
-                ? { ...msg, content: `🔄 Fixing error (attempt ${retryCount}/${MAX_RETRIES})...\n\nError: ${lastError}` }
-                : msg
-            )
-          );
-          setGenerationState({ status: 'generating', retryCount });
-        }
-
-        const result = await generateCode(content, lastError || undefined, retryCount);
-        finalContent = result.explanation || result.content;
-        finalCode = result.code;
-
-        if (!finalCode) {
-          throw new Error('No code was generated');
-        }
-
-        try {
-          if (!finalCode.includes('export default')) {
-            throw new Error('Component must have a default export');
-          }
-        } catch (validationError: any) {
-          lastError = validationError.message;
-          retryCount++;
-          continue;
-        }
-
-        const codeBlocks: CodeBlock[] = [
-          { language: 'tsx', code: finalCode, filename: 'App.tsx' }
-        ];
-
-        const featuresMarkdown = result.features.length > 0
-          ? '\n\n**Features:**\n' + result.features.map(f => `- ${f}`).join('\n')
-          : '';
-
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === aiMessageId
-              ? {
-                ...msg,
-                content: finalContent + featuresMarkdown,
-                codeBlocks,
-                status: 'complete',
-              }
-              : msg
-          )
-        );
-
-        setProjectFiles([
-          { path: 'App.tsx', content: finalCode, language: 'tsx' }
-        ]);
-
-        conversationHistoryRef.current.push({ role: 'assistant', content: finalContent });
-
-        setGenerationState({ status: 'building' });
-        await new Promise((r) => setTimeout(r, 500));
-        setGenerationState({ status: 'ready' });
-
-        return;
-      } catch (error: any) {
-        console.error(`Generation attempt ${retryCount + 1} failed:`, error);
-        lastError = error.message;
-        retryCount++;
+        plan = await planProject(content);
+        setCurrentPlan(plan);
+        console.log('📋 Plan created:', plan);
+      } catch (planError) {
+        console.warn('Planning skipped:', planError);
       }
-    }
 
-    setMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === aiMessageId
-          ? {
-            ...msg,
-            content: `❌ Failed to generate working code after ${MAX_RETRIES} attempts.\n\nLast error: ${lastError}\n\nPlease try rephrasing your request or providing more details.`,
-            status: 'error',
+      // Step 2: Generate types (optional, depends on plan)
+      if (plan && plan.ui?.components) {
+        updateMessage(aiMessageId, { content: '📝 Generating type definitions...' });
+        try {
+          const types = await generateTypes(plan);
+          console.log('📝 Types generated:', types.substring(0, 200));
+        } catch (typeError) {
+          console.warn('Type generation skipped:', typeError);
+        }
+      }
+
+      // Step 3: Generate code with retries
+      updateMessage(aiMessageId, { content: '⚡ Generating code...' });
+
+      let retryCount = 0;
+      let lastError: string | null = null;
+      let finalCode: string | null = null;
+      let finalContent = '';
+      let features: string[] = [];
+
+      while (retryCount <= MAX_RETRIES) {
+        try {
+          if (retryCount > 0) {
+            updateMessage(aiMessageId, {
+              content: `🔄 Fixing error (attempt ${retryCount}/${MAX_RETRIES})...\n\nError: ${lastError}`
+            });
+            setGenerationState({ status: 'generating', retryCount });
           }
-          : msg
-      )
-    );
-    setGenerationState({ status: 'error', error: lastError || 'Generation failed' });
+
+          const result = await generateCode(content, plan || undefined, lastError || undefined, retryCount);
+          finalContent = result.explanation || result.content;
+          finalCode = result.code;
+          features = result.features;
+
+          if (!finalCode) throw new Error('No code was generated');
+
+          // Canonicalize imports
+          finalCode = canonicalizeImports(finalCode);
+
+          // Step 4: Validate
+          updateMessage(aiMessageId, { content: '✅ Validating code...' });
+          const validation = await validateCode(finalCode, 'App.tsx');
+
+          if (!validation.valid && validation.errors.length > 0) {
+            lastError = validation.errors.join('; ');
+            retryCount++;
+            continue;
+          }
+
+          // Basic validation
+          if (!finalCode.includes('export default')) {
+            lastError = 'Component must have a default export';
+            retryCount++;
+            continue;
+          }
+
+          // SUCCESS
+          const featuresMarkdown = features.length > 0
+            ? '\n\n**Features:**\n' + features.map(f => `- ${f}`).join('\n')
+            : '';
+
+          const validationNote = validation.warnings.length > 0
+            ? `\n\n⚠️ Warnings:\n${validation.warnings.map(w => `- ${w}`).join('\n')}`
+            : '';
+
+          updateMessage(aiMessageId, {
+            content: finalContent + featuresMarkdown + validationNote,
+            codeBlocks: [{ language: 'tsx', code: finalCode, filename: 'App.tsx' }],
+            status: 'complete',
+          });
+
+          setProjectFiles([{ path: 'App.tsx', content: finalCode, language: 'tsx' }]);
+          conversationHistoryRef.current.push({ role: 'assistant', content: finalContent });
+
+          setGenerationState({ status: 'building' });
+          await new Promise((r) => setTimeout(r, 500));
+          setGenerationState({ status: 'ready' });
+          return;
+
+        } catch (error: any) {
+          console.error(`Generation attempt ${retryCount + 1} failed:`, error);
+          lastError = error.message;
+          retryCount++;
+        }
+      }
+
+      // All retries failed
+      updateMessage(aiMessageId, {
+        content: `❌ Failed after ${MAX_RETRIES} attempts.\n\nLast error: ${lastError}\n\nPlease try rephrasing your request.`,
+        status: 'error',
+      });
+      setGenerationState({ status: 'error', error: lastError || 'Generation failed' });
+
+    } catch (error: any) {
+      console.error('Pipeline error:', error);
+      updateMessage(aiMessageId, {
+        content: `❌ Error: ${error.message}`,
+        status: 'error',
+      });
+      setGenerationState({ status: 'error', error: error.message });
+    }
   }, [projectFiles]);
 
   const retryLastGeneration = useCallback(() => {
@@ -302,6 +331,7 @@ export function useChat() {
     messages,
     generationState,
     projectFiles,
+    currentPlan,
     sendMessage,
     retryLastGeneration,
     isGenerating: generationState.status === 'generating' || generationState.status === 'building',
