@@ -34,3 +34,20 @@ export interface ProjectState {
   activeFile: string;
   dependencies: string[];
 }
+
+// Patch-based editing types
+export interface CodePatch {
+  file: string;
+  operation: 'replace' | 'insert' | 'delete';
+  search: string;
+  replace?: string;
+  context?: string;
+}
+
+export interface EditorResponse {
+  explanation: string;
+  patches: CodePatch[];
+}
+
+export type RequestIntent = 'generate' | 'edit';
+

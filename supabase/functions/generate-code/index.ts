@@ -58,9 +58,9 @@ serve(async (req) => {
   try {
     const { prompt, conversationHistory = [], errorContext, retryCount = 0 }: RequestBody = await req.json();
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+    const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY');
+    if (!GROQ_API_KEY) {
+      throw new Error('GROQ_API_KEY not configured');
     }
 
     // Build messages array
@@ -93,14 +93,14 @@ Please provide a corrected version that fixes this error. Remember to output ONL
     console.log(`Generating code for prompt: ${prompt.substring(0, 100)}...`);
     console.log(`Retry count: ${retryCount}`);
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'llama-3.3-70b-versatile',
         messages,
         max_tokens: 4096,
         temperature: 0.7,
@@ -109,8 +109,8 @@ Please provide a corrected version that fixes this error. Remember to output ONL
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI Gateway error:', errorText);
-      throw new Error(`AI Gateway error: ${response.status}`);
+      console.error('Groq API error:', errorText);
+      throw new Error(`Groq API error: ${response.status}`);
     }
 
     const data = await response.json();
