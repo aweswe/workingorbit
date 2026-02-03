@@ -1,73 +1,200 @@
-# Welcome to your Lovable project
+# 🚀 Orbit
 
-## Project info
+**Orbit** is an experimental AI-powered code generation system inspired by Lovable/Bolt, focused on **single-file React app generation**, **surgical prompt-based editing**, and **incremental evolution of code** instead of destructive rewrites.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+Orbit is not just a frontend generator — it is an exploration of **AI-native software engineering**, including planning models, architectural reasoning, component graph construction, and backend orchestration using **Supabase Edge Functions**.
 
-## How can I edit this code?
+The project is intentionally split into multiple branches to separate a **stable minimal core** from a **highly experimental engine**.
 
-There are several ways of editing your application.
+---
 
-**Use Lovable**
+## 🌿 Branch Overview
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+### ✅ `main` — Stable Single-File Generator (Working)
 
-Changes made via Lovable will be committed automatically to this repo.
+This branch contains the **working production concept** of Orbit.
 
-**Use your preferred IDE**
+**Core Characteristics**
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+- Generates a **single-file React app** (`app.tsx`)
+- Prompt-based **surgical edits** (no full rewrites)
+- Frontend runs entirely on **mock data**
+- Deterministic, repeatable output
+- Low error surface
+- No backend dependency required
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+**Primary Use Case**
 
-Follow these steps:
+A Lovable-style clone where:
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+> Prompt → Working UI → Incremental edits → Still working UI
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+**Philosophy**
 
-# Step 3: Install the necessary dependencies.
-npm i
+> Keep one file sacred  
+> Edit surgically  
+> Never destroy working code
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
+---
 
-**Edit a file directly in GitHub**
+### 🧪 `dev` — Experimental Engine (Unstable / Research)
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+This branch contains the **next-generation Orbit engine** and broader AI-native engineering experiments.
 
-**Use GitHub Codespaces**
+**What Is Being Built Here**
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+- Multi-step **planning model**
+- Heavy UI/UX generation
+- Component-based output (multi-file projects)
+- Architectural reasoning layer
+- Dependency graph construction
+- Import resolution system
+- Supabase integration for:
+  - Auth
+  - Projects
+  - Storage
+  - Persistence
+- Backend orchestration using **Supabase Edge Functions**
+- Agent-style internal roles:
+  - Planner
+  - UI Designer
+  - Component Builder
+  - Backend Planner
+  - Integrator
 
-## What technologies are used for this project?
+**Important**
 
-This project is built with:
+This branch is intentionally **incomplete**.
 
-- Vite
-- TypeScript
+Some components are missing.  
+Some flows are partially wired.  
+Build errors are expected.
+
+This branch prioritizes **exploration and architecture discovery** over stability.
+
+---
+
+## 🧠 Engineering Depth
+
+Orbit is exploring how AI systems can behave more like **software engineers** rather than simple text generators.
+
+Key research areas:
+
+### 1. Planning Before Generation
+A model produces a structured plan:
+- Pages
+- Components
+- Data shapes
+- State needs
+- Backend requirements
+
+### 2. Deterministic Editing
+Instead of regenerating everything:
+- Locate target region
+- Apply patch
+- Preserve surrounding code
+
+### 3. File & Component Awareness
+Understanding:
+- What file owns what responsibility
+- What can be safely modified
+- What must remain stable
+
+### 4. Supabase Edge Function Architecture
+Orbit experiments with using **Supabase Edge Functions** as:
+
+- Generation orchestrators
+- Tool routers
+- Project state managers
+- Streaming response layer
+
+This enables:
+- Stateless scaling
+- Low-latency execution
+- Serverless orchestration
+
+---
+
+## 🛠️ Tech Stack (Current Direction)
+
+**Frontend**
 - React
-- shadcn-ui
-- Tailwind CSS
+- TypeScript
+- Next.js / Vite
+- Tailwind
 
-## How can I deploy this project?
+**Backend / Infra (Experimental)**
+- Supabase
+- Supabase Edge Functions
+- Postgres
+- Vector embeddings (future)
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+**AI**
+- Large language models
+- Diff-based editing
+- Planning-first generation
 
-## Can I connect a custom domain to my Lovable project?
+---
 
-Yes, you can!
+## ⚠️ Known Limitations
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+- No real backend in `main`
+- No auth in `main`
+- No persistence in `main`
+- No component extraction yet
+- No streaming generation yet
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+These are **intentional tradeoffs** to keep the core stable.
+
+---
+
+## 🔜 Next Steps — `main` Branch
+
+The next evolution of the stable branch will focus on **product polish and foundational platform features**:
+
+### 1. Correct Branding & UI Identity
+- Replace placeholder branding with **Orbit** identity
+- Consistent color system
+- Logo usage
+- Typography system
+- Product-level polish
+
+### 2. Auth Integration
+- Supabase Auth
+- Email / OAuth providers
+- Session handling
+
+### 3. Project Persistence
+- Save prompts
+- Save generated `app.tsx`
+- Load previous projects
+
+### 4. Still Single-File
+Even with auth and persistence:
+
+> Code generation remains single-file.
+
+Stability first.
+
+---
+
+## 🧭 Long-Term Direction
+
+- Merge proven ideas from `dev` into `main`
+- Gradual transition to multi-file projects
+- Component graph awareness
+- Backend generation
+- Deployable apps
+
+Orbit evolves **bottom-up**, not by big-bang rewrites.
+
+---
+
+## 🧪 Working With Branches
+
+```bash
+# Stable
+git checkout main
+
+# Experimental
+git checkout dev
