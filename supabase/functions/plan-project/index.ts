@@ -1,4 +1,5 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
+// @ts-ignore: Deno library
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
@@ -6,95 +7,59 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const PLANNER_SYSTEM_PROMPT = `You are a project planning agent. You analyze user requests and output structured JSON plans.
+const SYSTEM_PROMPT = `You are a Senior Project Architect. Your job is to design a modular, scalable Multi-File React project structure.
 
-You NEVER output code. Only JSON plans.
+CRITICAL ARCHITECTURAL RULES:
+1. ALWAYS include "shared/types.ts" as the first file (priority: 1). It must contain common prop interfaces (ButtonProps, CardProps, etc.).
+2. Use ONLY these file types: component, hook, service, type, util, store.
+3. NEVER use: "page", "layout", "view" as types. (Pages are components).
+4. THE ROOT: "App.tsx" must be the last file (priority: 10) and its type is "component".
+5. LIBS: Use ONLY Tailwind CSS. No external component libraries unless specified.
 
-OUTPUT FORMAT (pure JSON, no markdown):
+JSON SCHEMA:
+Return EXACTLY this JSON format:
 {
-  "architecture": {
-    "framework": "vite-react",
-    "language": "typescript",
-    "styling": "tailwind",
-    "alias": "@/",
-    "backend": "none",
-    "componentStyle": "atomic"
-  },
-  "ui": {
-    "components": {
-      "ui": ["Button", "Input", "Card"],
-      "sections": ["Hero", "Features"],
-      "layout": ["Navbar", "Footer"]
-    },
-    "pages": ["Home"],
+  "sharedProject": {
+    "name": "Project Name",
+    "description": "Clear project description",
     "theme": {
-      "primaryColor": "#3B82F6",
-      "style": "gradient"
+      "colors": { "primary": "#hex", "secondary": "#hex", "accent": "#hex", "background": "#hex" },
+      "typography": "Inter, sans-serif",
+      "borderRadius": "0.5rem"
+    },
+    "techStack": {
+      "framework": "React (Vite)",
+      "styling": "Tailwind CSS",
+      "icons": "Lucide React (inline SVGs)",
+      "state": "useState/Context"
     }
   },
-  "dependencies": ["framer-motion"]
-}
-
-RULES:
-1. Output ONLY valid JSON
-2. No markdown, no code fences
-3. Analyze the request to determine:
-   - What UI components are needed
-   - What sections/layouts are required
-   - What theme style fits
-   - What dependencies might be needed
-4. Be specific about component names
-5. Include animation library if request mentions "animated" or "dynamic"
-
-DEPENDENCY MAPPING:
-- animations/motion → framer-motion
-- icons → lucide-react (but prefer inline SVGs)
-- forms → react-hook-form
-- dates → date-fns
-- charts → recharts`;
-
-interface RequestBody {
-    prompt: string;
-}
-
-interface ProjectPlan {
-    architecture: {
-        framework: string;
-        language: string;
-        styling: string;
-        alias: string;
-        backend: string;
-        componentStyle: string;
-    };
-    ui: {
-        components: {
-            ui: string[];
-            sections: string[];
-            layout: string[];
-        };
-        pages: string[];
-        theme: {
-            primaryColor?: string;
-            style?: string;
-        };
-    };
-    dependencies: string[];
-}
-
-serve(async (req) => {
-    if (req.method === 'OPTIONS') {
-        return new Response(null, { headers: corsHeaders });
+  "architecture": "moderate",
+  "files": [
+    {
+      "path": "shared/types.ts",
+      "type": "type",
+      "purpose": "Shared UI component interfaces",
+      "dependencies": [],
+      "exports": ["ButtonProps", "CardProps"],
+      "priority": 1,
+      "estimatedLines": 40
     }
+  ]
+}`;
+
+serve(async (req: Request) => {
+    if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
     try {
-        const { prompt }: RequestBody = await req.json();
-
+        const { prompt, requirements } = await req.json();
+        // @ts-ignore: Deno namespace
         const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY');
-        if (!GROQ_API_KEY) {
-            throw new Error('GROQ_API_KEY not configured');
-        }
 
-        console.log(`Planning project for: ${prompt.substring(0, 100)}...`);
+        const userContext = `
+      USER PROMPT: ${prompt}
+      CLARIFIED REQUIREMENTS: ${JSON.stringify(requirements, null, 2)}
+    `;
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -103,72 +68,26 @@ serve(async (req) => {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile',
+                model: 'openai/gpt-oss-120b',
                 messages: [
-                    { role: 'system', content: PLANNER_SYSTEM_PROMPT },
-                    { role: 'user', content: `Plan a project for: ${prompt}` },
+                    { role: 'system', content: SYSTEM_PROMPT },
+                    { role: 'user', content: userContext }
                 ],
-                max_tokens: 2048,
-                temperature: 0.3,
+                response_format: { type: "json_object" },
+                temperature: 0.2
             }),
         });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('Groq API error:', errorText);
-            throw new Error(`Groq API error: ${response.status}`);
-        }
-
         const data = await response.json();
-        let content = data.choices?.[0]?.message?.content;
+        const plan = JSON.parse(data.choices[0].message.content);
 
-        if (!content) {
-            throw new Error('No content in AI response');
-        }
-
-        // Clean up response
-        content = content.trim();
-        if (content.startsWith('```')) {
-            content = content.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-        }
-
-        // Parse the plan
-        let plan: ProjectPlan;
-        try {
-            plan = JSON.parse(content);
-        } catch (parseError) {
-            console.error('Failed to parse plan:', content);
-            throw new Error('Failed to parse plan as JSON');
-        }
-
-        // Validate required fields
-        if (!plan.ui || !plan.ui.components) {
-            throw new Error('Invalid plan: missing UI components');
-        }
-
-        console.log(`Plan created: ${plan.ui.components.sections?.length || 0} sections`);
-
-        return new Response(
-            JSON.stringify({
-                success: true,
-                plan,
-            }),
-            {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            }
-        );
-    } catch (error: unknown) {
-        console.error('Error in plan-project:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        return new Response(
-            JSON.stringify({
-                success: false,
-                error: errorMessage,
-            }),
-            {
-                status: 500,
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            }
-        );
+        return new Response(JSON.stringify({ success: true, plan }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+    } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
     }
 });

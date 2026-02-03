@@ -1,4 +1,5 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
+// @ts-ignore: Deno library
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
@@ -65,7 +66,7 @@ interface RequestBody {
   retryCount?: number;
 }
 
-serve(async (req) => {
+serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -73,6 +74,7 @@ serve(async (req) => {
   try {
     const { prompt, conversationHistory = [], errorContext, retryCount = 0 }: RequestBody = await req.json();
 
+    // @ts-ignore: Deno namespace
     const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY');
     if (!GROQ_API_KEY) {
       throw new Error('GROQ_API_KEY not configured');
@@ -111,7 +113,7 @@ Please provide a corrected version. Remember: ONLY ONE component, ONLY ONE expor
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'openai/gpt-oss-120b',
         messages,
         max_tokens: 4096,
         temperature: 0.7,

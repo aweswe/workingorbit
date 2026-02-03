@@ -1,4 +1,5 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
+// @ts-ignore: Deno library
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
@@ -70,7 +71,7 @@ interface RequestBody {
     filename?: string;
 }
 
-serve(async (req) => {
+serve(async (req: Request) => {
     if (req.method === 'OPTIONS') {
         return new Response(null, { headers: corsHeaders });
     }
@@ -78,6 +79,7 @@ serve(async (req) => {
     try {
         const { prompt, currentCode, filename = 'App.tsx' }: RequestBody = await req.json();
 
+        // @ts-ignore: Deno namespace
         const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY');
         if (!GROQ_API_KEY) {
             throw new Error('GROQ_API_KEY not configured');
@@ -107,7 +109,7 @@ Remember: Output ONLY valid JSON. Use EXACT search strings from the code above.`
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile',
+                model: 'openai/gpt-oss-120b',
                 messages: [
                     { role: 'system', content: EDITOR_SYSTEM_PROMPT },
                     { role: 'user', content: userMessage },

@@ -54,6 +54,7 @@ type ViewMode = 'preview' | 'code';
 interface PreviewPanelProps {
   files: ProjectFile[];
   generationState: GenerationState;
+  activeFilePath: string | null;
   onRetry?: () => void;
   onError?: (error: string) => void;
 }
@@ -61,6 +62,7 @@ interface PreviewPanelProps {
 export function PreviewPanel({
   files,
   generationState,
+  activeFilePath,
   onRetry,
   onError
 }: PreviewPanelProps) {
@@ -68,37 +70,10 @@ export function PreviewPanel({
   const [showConsole, setShowConsole] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Extract App.tsx content
-  const appFile = files.find(f => f.path === 'App.tsx');
-  const appCode = appFile?.content || DEFAULT_APP_CODE;
-
-  // Configuration for Sandpack
-  const sandpackFiles = {
-    '/App.tsx': { code: appCode, active: true },
-    '/index.css': { code: DEFAULT_CSS },
-  };
-
-  const sandpackOptions = {
-    externalResources: [
-      'https://cdn.tailwindcss.com',
-    ],
-    showNavigator: false,
-    showTabs: false,
-  };
-
-  const customSetup = {
-    dependencies: {
-      'react': '^18.2.0',
-      'react-dom': '^18.2.0',
-      'lucide-react': '^0.294.0',
-      'recharts': '^2.10.3',
-    },
-  };
-
   return (
     <div
       className={cn(
-        "flex flex-col h-full w-full bg-surface-elevated border-l border-border transition-all duration-300",
+        "flex flex-col h-full w-full bg-surface-elevated transition-all duration-300",
         isFullscreen && "fixed inset-0 z-50 border-0"
       )}
     >
@@ -115,24 +90,15 @@ export function PreviewPanel({
       />
 
       {/* Main Content Area */}
-      <div className="flex-1 min-h-0 w-full relative group">
-        <SandpackProvider
-          key={appCode}
-          template="react-ts"
-          theme="dark"
-          files={sandpackFiles}
-          options={sandpackOptions}
-          customSetup={customSetup}
-        >
-          {viewMode === 'preview' ? (
-            <SandpackPreviewContent
-              showConsole={showConsole}
-              onError={onError}
-            />
-          ) : (
-            <SandpackCodeContent />
-          )}
-        </SandpackProvider>
+      <div className="flex-1 min-h-0 w-full relative overflow-hidden">
+        {viewMode === 'preview' ? (
+          <SandpackPreviewContent
+            showConsole={showConsole}
+            onError={onError}
+          />
+        ) : (
+          <SandpackCodeContent activeFilePath={activeFilePath} />
+        )}
       </div>
     </div>
   );
@@ -312,14 +278,16 @@ function SandpackPreviewContent({
   );
 }
 
-function SandpackCodeContent() {
+function SandpackCodeContent({ activeFilePath }: { activeFilePath: string | null }) {
+  const fileName = activeFilePath ? activeFilePath.split('/').pop() : 'App.tsx';
+
   return (
     <div className="h-full w-full flex flex-col bg-slate-950">
       {/* File tabs */}
       <div className="flex items-center gap-1 px-2 py-1 bg-slate-900 border-b border-slate-800">
-        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 rounded-t text-sm text-slate-300">
-          <FileCode className="w-4 h-4 text-blue-400" />
-          <span>App.tsx</span>
+        <div className="flex items-center gap-2 px-4 py-2 bg-slate-800 rounded-t-lg text-sm font-medium text-slate-100 border-b-2 border-primary">
+          <FileCode className="w-4 h-4 text-primary" />
+          <span>{fileName}</span>
         </div>
       </div>
 
